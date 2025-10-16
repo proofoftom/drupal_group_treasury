@@ -1,0 +1,44 @@
+{#
+/**
+ * @file
+ * Treasury error state template.
+ *
+ * Available variables:
+ * - treasury: SafeAccount entity
+ * - error_message: String
+ * - reconnect_url: URL object
+ * - create_new_url: URL object
+ */
+#}
+
+<div class="group-treasury-error">
+  <div class="messages messages--error">
+    <h3>{{ 'Unable to access treasury Safe account'|t }}</h3>
+    <p>{{ error_message }}</p>
+  </div>
+
+  <div class="treasury-details">
+    <dl>
+      <dt>{{ 'Network'|t }}</dt>
+      <dd>{{ treasury.network.value }}</dd>
+      <dt>{{ 'Safe Address'|t }}</dt>
+      <dd>{{ treasury.safe_address.value }}</dd>
+    </dl>
+  </div>
+
+  <div class="recovery-options">
+    <h4>{{ 'Recovery Options'|t }}</h4>
+    <div class="actions">
+      {% if reconnect_url %}
+        <a href="{{ reconnect_url }}" class="button">
+          {{ 'Reconnect Treasury'|t }}
+        </a>
+      {% endif %}
+      {% if create_new_url %}
+        <a href="{{ create_new_url }}" class="button">
+          {{ 'Create New Treasury'|t }}
+        </a>
+      {% endif %}
+    </div>
+  </div>
+</div>

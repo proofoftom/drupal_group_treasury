@@ -1,0 +1,55 @@
+# Treasury tab route
+group_treasury.treasury:
+  path: '/group/{group}/treasury'
+  defaults:
+    _controller: '\Drupal\group_treasury\Controller\GroupTreasuryController::treasuryTab'
+    _title_callback: '\Drupal\group_treasury\Controller\GroupTreasuryController::treasuryTitle'
+  requirements:
+    _permission: 'view group_treasury'
+    group: \d+
+  options:
+    parameters:
+      group:
+        type: entity:group
+
+# Create treasury route
+group_treasury.create:
+  path: '/group/{group}/treasury/create'
+  defaults:
+    _form: '\Drupal\group_treasury\Form\TreasuryCreateForm'
+    _title: 'Create Treasury'
+  requirements:
+    _permission: 'manage group_treasury'
+    group: \d+
+  options:
+    parameters:
+      group:
+        type: entity:group
+
+# Reconnect treasury route
+group_treasury.reconnect:
+  path: '/group/{group}/treasury/reconnect'
+  defaults:
+    _form: '\Drupal\group_treasury\Form\TreasuryReconnectForm'
+    _title: 'Reconnect Treasury'
+  requirements:
+    _permission: 'manage group_treasury'
+    group: \d+
+  options:
+    parameters:
+      group:
+        type: entity:group
+
+# Propose transaction route
+group_treasury.propose_transaction:
+  path: '/group/{group}/treasury/propose'
+  defaults:
+    _form: '\Drupal\group_treasury\Form\TreasuryTransactionProposeForm'
+    _title: 'Propose Transaction'
+  requirements:
+    _permission: 'propose group_treasury transactions'
+    group: \d+
+  options:
+    parameters:
+      group:
+        type: entity:group

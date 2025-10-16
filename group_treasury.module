@@ -1,0 +1,653 @@
+<?php
+
+/**
+ * @file
+ * Group Treasury module - Integrates Safe Smart Accounts as group treasuries.
+ */
+
+use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Url;
+use Drupal\group\Entity\GroupInterface;
+use Drupal\group\Entity\GroupTypeInterface;
+
+/**
+ * Implements hook_theme().
+ */
+function group_treasury_theme($existing, $type, $theme, $path) {
+  return [
+    'group_treasury_tab' => [
+      'variables' => [
+        'group' => NULL,
+        'treasury' => NULL,
+        'balance' => '0',
+        'signers' => [],
+        'threshold' => 1,
+        'transactions' => [],
+        'can_propose' => FALSE,
+        'can_sign' => FALSE,
+        'can_execute' => FALSE,
+        'propose_url' => NULL,
+      ],
+      'template' => 'group-treasury-tab',
+    ],
+    'group_treasury_error' => [
+      'variables' => [
+        'treasury' => NULL,
+        'error_message' => '',
+        'reconnect_url' => NULL,
+        'create_new_url' => NULL,
+      ],
+      'template' => 'group-treasury-error',
+    ],
+  ];
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter() for group_type_edit_form.
+ */
+function group_treasury_form_group_type_edit_form_alter(&$form, FormStateInterface $form_state, $form_id) {
+  /** @var \Drupal\group\Entity\GroupTypeInterface $group_type */
+  $group_type = $form_state->getFormObject()->getEntity();
+
+  // Add treasury wizard setting to creator wizard fieldset.
+  if (!isset($form['creator_wizard'])) {
+    $form['creator_wizard'] = [
+      '#type' => 'details',
+      '#title' => t('Creator wizard'),
+      '#open' => FALSE,
+    ];
+  }
+
+  $form['creator_wizard']['creator_treasury_wizard'] = [
+    '#type' => 'checkbox',
+    '#title' => t('Group creator must complete treasury deployment'),
+    '#description' => t('Require creators to deploy a Safe Smart Account treasury during group creation.'),
+    '#default_value' => $group_type->getThirdPartySetting('group_treasury', 'creator_treasury_wizard', FALSE),
+  ];
+
+  // Add submit handler to save third-party setting.
+  $form['#entity_builders'][] = 'group_treasury_group_type_form_builder';
+}
+
+/**
+ * Entity builder for group type form to save treasury settings.
+ */
+function group_treasury_group_type_form_builder($entity_type, GroupTypeInterface $group_type, &$form, FormStateInterface $form_state) {
+  $group_type->setThirdPartySetting(
+    'group_treasury',
+    'creator_treasury_wizard',
+    (bool) $form_state->getValue('creator_treasury_wizard')
+  );
+}
+
+/**
+ * Implements hook_form_alter().
+ *
+ * Intercept group creation form when treasury wizard is enabled.
+ */
+function group_treasury_form_alter(&$form, FormStateInterface $form_state, $form_id) {
+  // Only alter add forms for group entities.
+  if (!preg_match('/^group_(.+)_add_form$/', $form_id)) {
+    return;
+  }
+
+  $form_object = $form_state->getFormObject();
+  if (!$form_object instanceof \Drupal\Core\Entity\EntityFormInterface) {
+    return;
+  }
+
+  /** @var \Drupal\group\Entity\GroupInterface $group */
+  $group = $form_object->getEntity();
+  $group_type = $group->getGroupType();
+
+  // Check if treasury wizard is enabled for this group type.
+  if ($group_type->getThirdPartySetting('group_treasury', 'creator_treasury_wizard', FALSE)) {
+    // Add our custom submit handler to redirect to treasury creation.
+    // Place it before the regular save handler.
+    array_unshift($form['actions']['submit']['#submit'], 'group_treasury_redirect_to_wizard');
+  }
+}
+
+/**
+ * Custom submit handler to redirect to treasury creation wizard.
+ */
+function group_treasury_redirect_to_wizard(array &$form, FormStateInterface $form_state) {
+  // Store that we need to redirect to treasury wizard after save.
+  // This will be checked after the standard save handler runs.
+  $form_state->set('treasury_wizard_redirect', TRUE);
+
+  // Add another submit handler to run AFTER the save handler.
+  $form['#submit'][] = 'group_treasury_set_treasury_redirect';
+}
+
+/**
+ * Submit handler to set the redirect to treasury creation (runs after save).
+ */
+function group_treasury_set_treasury_redirect(array &$form, FormStateInterface $form_state) {
+  // Only redirect if our flag is set and the group was saved.
+  if (!$form_state->get('treasury_wizard_redirect')) {
+    return;
+  }
+
+  /** @var \Drupal\group\Entity\GroupInterface $group */
+  $group = $form_state->getFormObject()->getEntity();
+
+  // Make sure the group has been saved (has an ID).
+  if ($group && !$group->isNew()) {
+    // Override the redirect to go to treasury creation.
+    $form_state->setRedirect('group_treasury.create', ['group' => $group->id()]);
+
+    // Update the success message to indicate the extra step.
+    \Drupal::messenger()->deleteAll();
+    \Drupal::messenger()->addStatus(t('@type %title has been created. Please complete treasury deployment.', [
+      '@type' => $group->getGroupType()->label(),
+      '%title' => $group->label(),
+    ]));
+  }
+}
+
+/**
+ * Implements hook_group_operations_alter().
+ *
+ * Add "Add Treasury" operation to Groups without treasuries.
+ */
+function group_treasury_group_operations_alter(array &$operations, \Drupal\group\Entity\GroupInterface $group) {
+  $treasury_service = \Drupal::service('group_treasury.treasury_service');
+
+  // Only show if Group doesn't have treasury.
+  if (!$treasury_service->hasTreasury($group)) {
+    $operations['add_treasury'] = [
+      'title' => t('Add Treasury'),
+      'url' => Url::fromRoute('group_treasury.create', ['group' => $group->id()]),
+      'weight' => 50,
+    ];
+  }
+}
+
+/**
+ * Implements hook_preprocess_HOOK() for table.
+ */
+function group_treasury_preprocess_table(&$variables) {
+  // Check if this is the Safe accounts table.
+  if (!isset($variables['attributes']['class'])) {
+    return;
+  }
+
+  // Get current route to verify we're on the Safe accounts list page.
+  $route_match = \Drupal::routeMatch();
+  if ($route_match->getRouteName() !== 'safe_smart_accounts.user_account_list') {
+    return;
+  }
+
+  $user = $route_match->getParameter('user');
+  if (!$user) {
+    return;
+  }
+
+  // Get user's Ethereum address.
+  $ethereum_address = $user->get('field_ethereum_address')->value;
+  if (empty($ethereum_address)) {
+    return;
+  }
+
+  // Load Group membership service.
+  $membership_loader = \Drupal::service('group.membership_loader');
+  $memberships = $membership_loader->loadByUser($user);
+
+  if (empty($memberships)) {
+    return;
+  }
+
+  // Get treasury service.
+  $treasury_service = \Drupal::service('group_treasury.treasury_service');
+  $config_service = \Drupal::service('safe_smart_accounts.configuration_service');
+
+  $treasury_rows = [];
+
+  foreach ($memberships as $membership) {
+    $group = $membership->getGroup();
+
+    // Check if Group has treasury.
+    if (!$treasury_service->hasTreasury($group)) {
+      continue;
+    }
+
+    $treasury = $treasury_service->getTreasury($group);
+    if (!$treasury) {
+      continue;
+    }
+
+    // Check if user is a signer on this treasury.
+    $signer_safe_ids = $config_service->getSafesForSigner($ethereum_address);
+    if (!in_array($treasury->id(), $signer_safe_ids)) {
+      continue;
+    }
+
+    // Build treasury row similar to Safe account rows.
+    $status = $treasury->getStatus();
+    $safe_address = $treasury->getSafeAddress();
+
+    $address_display = $safe_address ?
+      substr($safe_address, 0, 10) . '...' . substr($safe_address, -8) :
+      t('Pending');
+
+    $status_class = match($status) {
+      'active' => 'status-active',
+      'pending' => 'status-pending',
+      'deploying' => 'status-deploying',
+      'error' => 'status-error',
+      default => 'status-unknown',
+    };
+
+    $status_display = [
+      'data' => [
+        '#markup' => '<span class="' . $status_class . '">' . ucfirst($status) . '</span>',
+      ],
+    ];
+
+    // Create action links for Group treasury.
+    $actions = [
+      [
+        '#type' => 'link',
+        '#title' => t('View Treasury'),
+        '#url' => Url::fromRoute('group_treasury.treasury', ['group' => $group->id()]),
+        '#attributes' => ['class' => ['button', 'button--small']],
+      ],
+    ];
+
+    if ($status === 'active' && $membership->hasPermission('propose group_treasury transactions')) {
+      $actions[] = [
+        '#type' => 'link',
+        '#title' => t('Propose Transaction'),
+        '#url' => Url::fromRoute('group_treasury.propose_transaction', ['group' => $group->id()]),
+        '#attributes' => ['class' => ['button', 'button--small', 'button--secondary']],
+      ];
+    }
+
+    $actions_cell = [
+      'data' => [
+        '#theme' => 'item_list',
+        '#items' => $actions,
+        '#attributes' => ['class' => ['inline-actions']],
+      ],
+    ];
+
+    // Role display for treasury.
+    $role_display = [
+      'data' => [
+        '#markup' => '<span class="role-treasury">Treasury Signer</span>',
+      ],
+    ];
+
+    // Add context badge to address display.
+    $group_label = $group->label();
+    $context_badge = " <span class=\"group-badge\" style=\"font-size: 0.85em; color: #666;\">(Group: {$group_label})</span>";
+
+    $treasury_rows[] = [
+      ucfirst($treasury->getNetwork()),
+      ['data' => ['#markup' => $address_display . $context_badge]],
+      $status_display,
+      $treasury->getThreshold(),
+      $role_display,
+      \Drupal::service('date.formatter')->format($treasury->get('created')->value, 'short'),
+      $actions_cell,
+    ];
+  }
+
+  // Add treasury rows to the table.
+  if (!empty($treasury_rows)) {
+    $variables['rows'] = array_merge($variables['rows'], $treasury_rows);
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_insert() for group_relationship.
+ */
+function group_treasury_group_relationship_insert($entity) {
+  _group_treasury_handle_membership_change($entity, 'insert');
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_update() for group_relationship.
+ */
+function group_treasury_group_relationship_update($entity) {
+  _group_treasury_handle_membership_change($entity, 'update');
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_delete() for group_relationship.
+ */
+function group_treasury_group_relationship_delete($entity) {
+  _group_treasury_handle_membership_change($entity, 'delete');
+}
+
+/**
+ * Helper function to handle Group membership changes for treasury signers.
+ *
+ * @param \Drupal\group\Entity\GroupRelationshipInterface $relationship
+ *   The group relationship entity.
+ * @param string $operation
+ *   The operation: insert, update, or delete.
+ */
+function _group_treasury_handle_membership_change($relationship, $operation) {
+  // Only process group_membership relationships.
+  if (strpos($relationship->getPluginId(), 'group_membership') !== 0) {
+    return;
+  }
+
+  $group = $relationship->getGroup();
+  $user = $relationship->getEntity();
+
+  // Check if Group has treasury.
+  $treasury_service = \Drupal::service('group_treasury.treasury_service');
+  if (!$treasury_service->hasTreasury($group)) {
+    return;
+  }
+
+  $treasury = $treasury_service->getTreasury($group);
+  if (!$treasury || $treasury->getStatus() !== 'active') {
+    return;
+  }
+
+  // Get user's Ethereum address.
+  if (!$user->hasField('field_ethereum_address')) {
+    return;
+  }
+
+  $ethereum_address = $user->get('field_ethereum_address')->value;
+  if (empty($ethereum_address)) {
+    return;
+  }
+
+  // Check if user has/had admin role.
+  $membership = $group->getMember($user);
+  $has_admin_role = FALSE;
+
+  if ($membership) {
+    $roles = $membership->getRoles();
+    $expected_admin_role = $group->bundle() . '-admin';
+
+    foreach ($roles as $role) {
+      if ($role->id() === $expected_admin_role) {
+        $has_admin_role = TRUE;
+        break;
+      }
+    }
+  }
+
+  // Get current signer list.
+  $config_service = \Drupal::service('safe_smart_accounts.configuration_service');
+  $signer_safe_ids = $config_service->getSafesForSigner($ethereum_address);
+  $is_current_signer = in_array($treasury->id(), $signer_safe_ids);
+
+  // Get entity type manager to pass to helper functions.
+  $entity_type_manager = \Drupal::entityTypeManager();
+  $current_user = \Drupal::currentUser();
+
+  // Determine action needed.
+  if ($operation === 'delete') {
+    // User leaving Group - propose remove if they're a signer.
+    if ($is_current_signer) {
+      _group_treasury_propose_remove_signer($treasury, $user, $ethereum_address, $entity_type_manager, $current_user);
+    }
+  }
+  elseif ($has_admin_role && !$is_current_signer) {
+    // User gained admin role - propose add.
+    _group_treasury_propose_add_signer($treasury, $user, $ethereum_address, $entity_type_manager);
+  }
+  elseif (!$has_admin_role && $is_current_signer) {
+    // User lost admin role - propose remove.
+    _group_treasury_propose_remove_signer($treasury, $user, $ethereum_address, $entity_type_manager, $current_user);
+  }
+}
+
+/**
+ * Propose adding a signer to the treasury.
+ *
+ * @param \Drupal\safe_smart_accounts\Entity\SafeAccountInterface $safe_account
+ *   The Safe account entity.
+ * @param \Drupal\Core\Session\AccountInterface $user
+ *   The user to add as signer.
+ * @param string $address
+ *   The user's blockchain address.
+ * @param \Drupal\Core\Entity\EntityTypeManagerInterface $entity_type_manager
+ *   The entity type manager service.
+ */
+function _group_treasury_propose_add_signer($safe_account, $user, string $address, $entity_type_manager) {
+  $transaction_storage = $entity_type_manager->getStorage('safe_transaction');
+
+  // Check for existing pending addOwner transaction for this address.
+  $existing = $transaction_storage->getQuery()
+    ->condition('safe_account', $safe_account->id())
+    ->condition('status', 'pending')
+    ->condition('to_address', $safe_account->getSafeAddress())
+    ->accessCheck(FALSE)
+    ->execute();
+
+  if (!empty($existing)) {
+    // Check if any existing pending transaction is for adding this signer.
+    foreach ($transaction_storage->loadMultiple($existing) as $tx) {
+      $data = $tx->getData();
+      // Check if this is an addOwner call for this address.
+      // Function selector for addOwnerWithThreshold: 0x0d582f13.
+      if (strpos($data, '0x0d582f13') === 0 && stripos($data, substr($address, 2)) !== FALSE) {
+        // Already has pending add transaction.
+        return;
+      }
+    }
+  }
+
+  // Encode addOwnerWithThreshold(address owner, uint256 _threshold).
+  $current_threshold = $safe_account->getThreshold();
+  $encoded_data = _group_treasury_encode_add_owner($address, $current_threshold);
+
+  // Calculate next nonce.
+  $query = $transaction_storage->getQuery()
+    ->accessCheck(FALSE)
+    ->condition('safe_account', $safe_account->id())
+    ->condition('nonce', NULL, 'IS NOT NULL')
+    ->sort('nonce', 'DESC')
+    ->range(0, 1);
+
+  $result = $query->execute();
+  $next_nonce = 0;
+
+  if (!empty($result)) {
+    $last_tx = $transaction_storage->load(reset($result));
+    $next_nonce = $last_tx->get('nonce')->value + 1;
+  }
+
+  // Create Safe transaction entity.
+  $transaction = $transaction_storage->create([
+    'safe_account' => $safe_account->id(),
+    'to_address' => $safe_account->getSafeAddress(),
+    'value' => '0',
+    'data' => $encoded_data,
+    'operation' => 0,
+    'nonce' => $next_nonce,
+    'created_by' => $user->id(),
+    'status' => 'pending',
+  ]);
+
+  $transaction->save();
+
+  // Notify via Drupal messenger.
+  \Drupal::messenger()->addStatus(t('Transaction proposed to add @user as treasury signer. Existing signers must approve. Transaction #@id', [
+    '@user' => $user->getDisplayName(),
+    '@id' => $transaction->id(),
+  ]));
+}
+
+/**
+ * Propose removing a signer from the treasury.
+ *
+ * @param \Drupal\safe_smart_accounts\Entity\SafeAccountInterface $safe_account
+ *   The Safe account entity.
+ * @param \Drupal\Core\Session\AccountInterface $user
+ *   The user to remove as signer.
+ * @param string $address
+ *   The user's blockchain address.
+ * @param \Drupal\Core\Entity\EntityTypeManagerInterface $entity_type_manager
+ *   The entity type manager service.
+ * @param \Drupal\Core\Session\AccountProxyInterface $current_user
+ *   The current user service.
+ */
+function _group_treasury_propose_remove_signer($safe_account, $user, string $address, $entity_type_manager, $current_user) {
+  $transaction_storage = $entity_type_manager->getStorage('safe_transaction');
+
+  // Check for existing pending removeOwner transaction.
+  $existing = $transaction_storage->getQuery()
+    ->condition('safe_account', $safe_account->id())
+    ->condition('status', 'pending')
+    ->condition('to_address', $safe_account->getSafeAddress())
+    ->accessCheck(FALSE)
+    ->execute();
+
+  if (!empty($existing)) {
+    foreach ($transaction_storage->loadMultiple($existing) as $tx) {
+      $data = $tx->getData();
+      // Function selector for removeOwner: 0xf8dc5dd9.
+      if (strpos($data, '0xf8dc5dd9') === 0 && stripos($data, substr($address, 2)) !== FALSE) {
+        // Already has pending remove transaction.
+        return;
+      }
+    }
+  }
+
+  // Encode removeOwner(address prevOwner, address owner, uint256 _threshold).
+  // Need to find previous owner in the linked list.
+  // Get signers from SafeConfiguration.
+  $config_storage = $entity_type_manager->getStorage('safe_configuration');
+  $safe_config = $config_storage->load('safe_' . $safe_account->id());
+  $signers = $safe_config ? $safe_config->getSigners() : [];
+
+  if (empty($signers)) {
+    // Cannot remove signer if we don't have signer list.
+    return;
+  }
+
+  $prev_owner = _group_treasury_find_prev_owner($signers, $address);
+
+  $current_threshold = $safe_account->getThreshold();
+  $new_threshold = max(1, $current_threshold);
+
+  $encoded_data = _group_treasury_encode_remove_owner($prev_owner, $address, $new_threshold);
+
+  // Calculate next nonce.
+  $query = $transaction_storage->getQuery()
+    ->accessCheck(FALSE)
+    ->condition('safe_account', $safe_account->id())
+    ->condition('nonce', NULL, 'IS NOT NULL')
+    ->sort('nonce', 'DESC')
+    ->range(0, 1);
+
+  $result = $query->execute();
+  $next_nonce = 0;
+
+  if (!empty($result)) {
+    $last_tx = $transaction_storage->load(reset($result));
+    $next_nonce = $last_tx->get('nonce')->value + 1;
+  }
+
+  // Create Safe transaction entity.
+  $transaction = $transaction_storage->create([
+    'safe_account' => $safe_account->id(),
+    'to_address' => $safe_account->getSafeAddress(),
+    'value' => '0',
+    'data' => $encoded_data,
+    'operation' => 0,
+    'nonce' => $next_nonce,
+    'created_by' => $current_user->id(),
+    'status' => 'pending',
+  ]);
+
+  $transaction->save();
+
+  // Notify via Drupal messenger.
+  \Drupal::messenger()->addStatus(t('Transaction proposed to remove @user as treasury signer. Existing signers must approve. Transaction #@id', [
+    '@user' => $user->getDisplayName(),
+    '@id' => $transaction->id(),
+  ]));
+}
+
+/**
+ * Encode addOwnerWithThreshold function call.
+ *
+ * @param string $owner_address
+ *   The owner address to add.
+ * @param int $threshold
+ *   The threshold (unchanged).
+ *
+ * @return string
+ *   The encoded function call data.
+ */
+function _group_treasury_encode_add_owner(string $owner_address, int $threshold): string {
+  // Function selector: addOwnerWithThreshold(address,uint256) = 0x0d582f13.
+  $selector = '0x0d582f13';
+
+  // Pad address to 32 bytes (remove 0x prefix, pad left).
+  $address_param = str_pad(substr($owner_address, 2), 64, '0', STR_PAD_LEFT);
+
+  // Pad threshold to 32 bytes.
+  $threshold_param = str_pad(dechex($threshold), 64, '0', STR_PAD_LEFT);
+
+  return $selector . $address_param . $threshold_param;
+}
+
+/**
+ * Encode removeOwner function call.
+ *
+ * @param string $prev_owner
+ *   The previous owner in the linked list.
+ * @param string $owner_address
+ *   The owner address to remove.
+ * @param int $threshold
+ *   The new threshold.
+ *
+ * @return string
+ *   The encoded function call data.
+ */
+function _group_treasury_encode_remove_owner(string $prev_owner, string $owner_address, int $threshold): string {
+  // Function selector: removeOwner(address,address,uint256) = 0xf8dc5dd9.
+  $selector = '0xf8dc5dd9';
+
+  // Pad addresses to 32 bytes.
+  $prev_owner_param = str_pad(substr($prev_owner, 2), 64, '0', STR_PAD_LEFT);
+  $owner_param = str_pad(substr($owner_address, 2), 64, '0', STR_PAD_LEFT);
+
+  // Pad threshold to 32 bytes.
+  $threshold_param = str_pad(dechex($threshold), 64, '0', STR_PAD_LEFT);
+
+  return $selector . $prev_owner_param . $owner_param . $threshold_param;
+}
+
+/**
+ * Find the previous owner in the Safe's linked list.
+ *
+ * @param array $signers
+ *   Array of signer addresses.
+ * @param string $address
+ *   The address to find the previous owner for.
+ *
+ * @return string
+ *   The previous owner address, or SENTINEL if address is first.
+ */
+function _group_treasury_find_prev_owner(array $signers, string $address): string {
+  $sentinel = '0x0000000000000000000000000000000000000001';
+
+  // Find index of address.
+  $index = array_search(strtolower($address), array_map('strtolower', $signers));
+
+  if ($index === FALSE) {
+    // Address not found, return sentinel.
+    return $sentinel;
+  }
+
+  if ($index === 0) {
+    // First element, previous is sentinel.
+    return $sentinel;
+  }
+
+  // Return previous element.
+  return $signers[$index - 1];
+}

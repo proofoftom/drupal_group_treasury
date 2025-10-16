@@ -1,0 +1,6 @@
+# Treasury tab
+group_treasury.treasury_tab:
+  route_name: group_treasury.treasury
+  base_route: entity.group.canonical
+  title: 'Treasury'
+  weight: 50

@@ -1,0 +1,29 @@
+services:
+  group_treasury.access_control:
+    class: Drupal\group_treasury\Access\TreasuryAccessControlHandler
+
+  group_treasury.treasury_service:
+    class: Drupal\group_treasury\Service\GroupTreasuryService
+    arguments: ['@entity_type.manager', '@cache_tags.invalidator']
+
+  group_treasury.accessibility_checker:
+    class: Drupal\group_treasury\Service\TreasuryAccessibilityChecker
+    arguments: ['@safe_smart_accounts.api_service']
+
+  group_treasury.role_assign_subscriber:
+    class: Drupal\group_treasury\EventSubscriber\GroupRoleAssignSubscriber
+    arguments:
+      - '@group_treasury.treasury_service'
+      - '@entity_type.manager'
+      - '@messenger'
+    tags:
+      - { name: event_subscriber }
+
+  group_treasury.role_remove_subscriber:
+    class: Drupal\group_treasury\EventSubscriber\GroupRoleRemoveSubscriber
+    arguments:
+      - '@group_treasury.treasury_service'
+      - '@entity_type.manager'
+      - '@messenger'
+    tags:
+      - { name: event_subscriber }

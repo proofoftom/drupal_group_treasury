@@ -1,0 +1,8 @@
+name: 'Group Treasury'
+type: module
+description: 'Integrates Safe Smart Accounts as treasuries for Drupal Groups'
+core_version_requirement: ^10
+package: 'Group'
+dependencies:
+  - group:group
+  - safe_smart_accounts:safe_smart_accounts

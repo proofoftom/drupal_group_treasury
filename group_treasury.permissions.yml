@@ -1,0 +1,19 @@
+view group_treasury:
+  title: 'View group treasury'
+  description: 'View the Treasury tab and transaction history'
+
+propose group_treasury transactions:
+  title: 'Propose treasury transactions'
+  description: 'Create new transaction proposals'
+
+sign group_treasury transactions:
+  title: 'Sign treasury transactions'
+  description: 'Add signatures to pending transactions'
+
+execute group_treasury transactions:
+  title: 'Execute treasury transactions'
+  description: 'Submit fully-signed transactions to blockchain'
+
+manage group_treasury:
+  title: 'Manage group treasury'
+  description: 'Add, remove, or reconnect treasury Safe accounts'
