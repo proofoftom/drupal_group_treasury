@@ -96,8 +96,15 @@ function group_treasury_form_alter(&$form, FormStateInterface $form_state, $form
     return;
   }
 
+  $entity = $form_object->getEntity();
+
+  // Make sure this is a Group entity, not a GroupType or other entity.
+  if (!$entity instanceof \Drupal\group\Entity\GroupInterface) {
+    return;
+  }
+
   /** @var \Drupal\group\Entity\GroupInterface $group */
-  $group = $form_object->getEntity();
+  $group = $entity;
   $group_type = $group->getGroupType();
 
   // Check if treasury wizard is enabled for this group type.
