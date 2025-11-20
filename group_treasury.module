@@ -372,10 +372,18 @@ function _group_treasury_handle_membership_change($relationship, $operation) {
 
   if ($membership) {
     $roles = $membership->getRoles();
-    $expected_admin_role = $group->bundle() . '-admin';
+
+    // Support both standard Group module and Open Social role naming conventions
+    // Standard: {bundle}-admin
+    // Open Social: {bundle}-group_manager
+    $bundle = $group->bundle();
+    $admin_role_patterns = [
+      $bundle . '-admin',
+      $bundle . '-group_manager',
+    ];
 
     foreach ($roles as $role) {
-      if ($role->id() === $expected_admin_role) {
+      if (in_array($role->id(), $admin_role_patterns, TRUE)) {
         $has_admin_role = TRUE;
         break;
       }
