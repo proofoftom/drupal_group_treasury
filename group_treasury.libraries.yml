@@ -1,0 +1,7 @@
+treasury_deployment:
+  version: 1.x
+  js:
+    js/treasury-deployment.js: {}
+  dependencies:
+    - core/drupal
+    - safe_smart_accounts/safe_deployment
