@@ -1,0 +1,22 @@
+{
+  "name": "drupal/group_treasury",
+  "description": "Integrates Safe Smart Accounts as treasuries for Drupal Groups",
+  "type": "drupal-module",
+  "license": "GPL-2.0-or-later",
+  "require": {
+    "php": ">=8.2",
+    "drupal/core": "^10",
+    "drupal/group": "*",
+    "drupal/safe_smart_accounts": "*"
+  },
+  "autoload": {
+    "psr-4": {
+      "Drupal\\group_treasury\\": "src/"
+    }
+  },
+  "extra": {
+    "drupal": {
+      "version": "0.0.1"
+    }
+  }
+}
