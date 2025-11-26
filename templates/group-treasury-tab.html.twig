@@ -1,0 +1,308 @@
+{#
+/**
+ * @file
+ * Treasury management interface template.
+ *
+ * Available variables:
+ * - group: Group entity
+ * - treasury: SafeAccount entity
+ * - balance: Safe balance
+ * - signers: Array of signer addresses
+ * - threshold: Required signatures
+ * - transactions: Array of transactions
+ * - can_propose: Boolean
+ * - can_sign: Boolean
+ * - can_execute: Boolean
+ * - propose_url: URL object for proposal form
+ */
+#}
+
+<div class="group-treasury">
+  <div class="treasury-header">
+    <h2>{{ 'Treasury'|t }}</h2>
+    <div class="treasury-info">
+      <div class="treasury-info-item">
+        <span class="label">{{ 'Safe Address'|t }}:</span>
+        <span class="safe-address">{{ treasury.safe_address.value }}</span>
+      </div>
+      <div class="treasury-info-item">
+        <span class="label">{{ 'Network'|t }}:</span>
+        <span class="network-badge">{{ treasury.network.value }}</span>
+      </div>
+      <div class="treasury-info-item">
+        <span class="label">{{ 'Balance'|t }}:</span>
+        <span class="balance">{{ balance }} ETH</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="signers-section">
+    <h3>{{ 'Signers'|t }}</h3>
+    <p class="threshold-info">
+      {{ 'Requires @threshold of @total signatures to execute transactions'|t({'@threshold': threshold, '@total': signers|length}) }}
+    </p>
+    {% if signers %}
+      <div class="signers-list">
+        {% for signer in signers %}
+          <div class="signer-item">
+            <span class="signer-icon">👤</span>
+            <span class="signer-address">{{ signer }}</span>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="no-signers">{{ 'No signers configured'|t }}</p>
+    {% endif %}
+  </div>
+
+  <div class="transactions-section">
+    <div class="transactions-header">
+      <h3>{{ 'Transactions'|t }}</h3>
+      {% if can_propose and propose_url %}
+        <a href="{{ propose_url }}" class="button button--primary">
+          {{ 'Propose Transaction'|t }}
+        </a>
+      {% endif %}
+    </div>
+
+    {% if transactions %}
+      <div class="transactions-list">
+        {% for transaction in transactions %}
+          {% set value_eth = (transaction.value.value / 1000000000000000000)|number_format(6) %}
+          <div class="transaction-item transaction-status-{{ transaction.status.value }}">
+            <div class="transaction-header">
+              <div class="transaction-id">
+                <strong>{{ 'TX'|t }} #{{ transaction.id.value }}</strong>
+                {% if transaction.nonce.value is not null %}
+                  <span class="transaction-nonce">({{ 'Nonce'|t }}: {{ transaction.nonce.value }})</span>
+                {% endif %}
+              </div>
+              <div class="transaction-status">
+                <span class="status-badge status-{{ transaction.status.value }}">
+                  {{ transaction.status.value|capitalize }}
+                </span>
+              </div>
+            </div>
+            <div class="transaction-details">
+              <div class="transaction-detail">
+                <span class="detail-label">{{ 'To'|t }}:</span>
+                <span class="detail-value detail-address">{{ transaction.to_address.value }}</span>
+              </div>
+              <div class="transaction-detail">
+                <span class="detail-label">{{ 'Amount'|t }}:</span>
+                <span class="detail-value detail-amount">{{ value_eth }} ETH</span>
+              </div>
+              {% if transaction.description.value %}
+                <div class="transaction-detail">
+                  <span class="detail-label">{{ 'Description'|t }}:</span>
+                  <span class="detail-value">{{ transaction.description.value }}</span>
+                </div>
+              {% endif %}
+              <div class="transaction-detail">
+                <span class="detail-label">{{ 'Created'|t }}:</span>
+                <span class="detail-value">{{ transaction.created.value|format_date('short') }}</span>
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="no-transactions">{{ 'No transactions yet'|t }}</p>
+    {% endif %}
+  </div>
+</div>
+
+<style>
+.group-treasury {
+  max-width: 1200px;
+}
+
+.treasury-header h2 {
+  margin-bottom: 1rem;
+}
+
+.treasury-info {
+  display: flex;
+  gap: 2rem;
+  margin-bottom: 2rem;
+  padding: 1rem;
+  background: #f5f5f5;
+  border-radius: 4px;
+}
+
+.treasury-info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.treasury-info-item .label {
+  font-weight: bold;
+  font-size: 0.85rem;
+  color: #666;
+}
+
+.safe-address {
+  font-family: monospace;
+  font-size: 0.9rem;
+}
+
+.signers-section {
+  margin-bottom: 2rem;
+}
+
+.signers-section h3 {
+  margin-bottom: 0.5rem;
+}
+
+.threshold-info {
+  color: #666;
+  margin-bottom: 1rem;
+  font-size: 0.95rem;
+}
+
+.signers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.signer-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: #f9f9f9;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.signer-address {
+  font-family: monospace;
+  font-size: 0.9rem;
+}
+
+.transactions-section {
+  margin-top: 2rem;
+}
+
+.transactions-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.transactions-header h3 {
+  margin: 0;
+}
+
+.transactions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.transaction-item {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 1rem;
+  background: #fff;
+}
+
+.transaction-item.transaction-status-pending {
+  border-left: 4px solid #f0ad4e;
+}
+
+.transaction-item.transaction-status-executed {
+  border-left: 4px solid #5cb85c;
+}
+
+.transaction-item.transaction-status-failed {
+  border-left: 4px solid #d9534f;
+}
+
+.transaction-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #eee;
+}
+
+.transaction-id {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.transaction-nonce {
+  font-size: 0.85rem;
+  color: #666;
+  font-weight: normal;
+}
+
+.status-badge {
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.status-pending {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.status-executed {
+  background: #d4edda;
+  color: #155724;
+}
+
+.status-failed {
+  background: #f8d7da;
+  color: #721c24;
+}
+
+.transaction-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.transaction-detail {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.detail-label {
+  font-weight: 600;
+  min-width: 100px;
+  color: #666;
+}
+
+.detail-value {
+  color: #333;
+}
+
+.detail-address {
+  font-family: monospace;
+  font-size: 0.9rem;
+  word-break: break-all;
+}
+
+.detail-amount {
+  font-weight: 600;
+  color: #0073aa;
+}
+
+.no-transactions,
+.no-signers {
+  color: #666;
+  font-style: italic;
+  padding: 1rem;
+  background: #f9f9f9;
+  border-radius: 4px;
+}
+</style>

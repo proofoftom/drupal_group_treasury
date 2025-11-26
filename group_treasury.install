@@ -1,0 +1,308 @@
+<?php
+
+/**
+ * @file
+ * Install, update and uninstall functions for the Group Treasury module.
+ */
+
+/**
+ * Implements hook_install().
+ */
+function group_treasury_install() {
+  _group_treasury_update_block_visibility();
+  _group_treasury_update_page_title_block();
+  \Drupal::messenger()->addMessage(t('Group Treasury module installed successfully.'));
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function group_treasury_uninstall() {
+  _group_treasury_remove_block_visibility();
+  \Drupal::messenger()->addMessage(t('Group Treasury module uninstalled.'));
+}
+
+/**
+ * Helper to add treasury path to block visibility.
+ */
+function _group_treasury_update_block_visibility() {
+  $config_factory = \Drupal::configFactory();
+  $treasury_path = '/group/*/treasury';
+
+  $blocks_to_update = [
+    'block.block.groupheroblock',
+    'block.block.socialblue_groupheroblock',
+    'block.block.socialblue_group_statistic_block',
+    'block.block.socialblue_group_add_block',
+    'block.block.socialblue_group_add_event_block',
+    'block.block.socialblue_group_add_topic_block',
+  ];
+
+  foreach ($blocks_to_update as $block_id) {
+    $config = $config_factory->getEditable($block_id);
+
+    if ($config->isNew()) {
+      continue;
+    }
+
+    $current_paths = $config->get('visibility.request_path.pages');
+
+    if (empty($current_paths)) {
+      continue;
+    }
+
+    if (strpos($current_paths, $treasury_path) !== FALSE) {
+      continue;
+    }
+
+    $paths_array = preg_split('/\r\n|\r|\n/', $current_paths);
+
+    $insert_position = FALSE;
+    foreach ($paths_array as $index => $path) {
+      if (strpos($path, '/group/*/topics') !== FALSE) {
+        $insert_position = $index + 1;
+        break;
+      }
+    }
+
+    if ($insert_position !== FALSE) {
+      array_splice($paths_array, $insert_position, 0, $treasury_path);
+    }
+    else {
+      $paths_array[] = $treasury_path;
+    }
+
+    $new_paths = implode("\r\n", $paths_array);
+    $config->set('visibility.request_path.pages', $new_paths);
+    $config->save();
+
+    \Drupal::logger('group_treasury')->info('Updated block visibility for @block_id', [
+      '@block_id' => $block_id,
+    ]);
+  }
+
+  \Drupal::service('plugin.manager.block')->clearCachedDefinitions();
+}
+
+/**
+ * Helper to remove treasury path from block visibility.
+ */
+function _group_treasury_remove_block_visibility() {
+  $config_factory = \Drupal::configFactory();
+  $treasury_path = '/group/*/treasury';
+
+  $blocks_to_update = [
+    'block.block.groupheroblock',
+    'block.block.socialblue_groupheroblock',
+    'block.block.socialblue_group_statistic_block',
+    'block.block.socialblue_group_add_block',
+    'block.block.socialblue_group_add_event_block',
+    'block.block.socialblue_group_add_topic_block',
+  ];
+
+  foreach ($blocks_to_update as $block_id) {
+    $config = $config_factory->getEditable($block_id);
+
+    if ($config->isNew()) {
+      continue;
+    }
+
+    $current_paths = $config->get('visibility.request_path.pages');
+
+    if (empty($current_paths)) {
+      continue;
+    }
+
+    if (strpos($current_paths, $treasury_path) === FALSE) {
+      continue;
+    }
+
+    $paths_array = preg_split('/\r\n|\r|\n/', $current_paths);
+    $paths_array = array_filter($paths_array, function($path) use ($treasury_path) {
+      return trim($path) !== $treasury_path;
+    });
+
+    $new_paths = implode("\r\n", $paths_array);
+    $config->set('visibility.request_path.pages', $new_paths);
+    $config->save();
+
+    \Drupal::logger('group_treasury')->info('Removed treasury visibility from @block_id', [
+      '@block_id' => $block_id,
+    ]);
+  }
+
+  \Drupal::service('plugin.manager.block')->clearCachedDefinitions();
+}
+
+/**
+ * Helper to hide page title block on treasury pages.
+ */
+function _group_treasury_update_page_title_block() {
+  $config_factory = \Drupal::configFactory();
+
+  $title_blocks = [
+    'block.block.socialblue_pagetitleblock_content',
+    'block.block.pagetitleblock',
+    'block.block.socialblue_pagetitleblock',
+  ];
+
+  foreach ($title_blocks as $block_id) {
+    $config = $config_factory->getEditable($block_id);
+
+    if ($config->isNew()) {
+      continue;
+    }
+
+    // Check if this block uses negated request_path visibility.
+    $negate = $config->get('visibility.request_path.negate');
+    if ($negate !== TRUE) {
+      continue;
+    }
+
+    $current_paths = $config->get('visibility.request_path.pages');
+    if (empty($current_paths)) {
+      continue;
+    }
+
+    // Check if treasury path already exists.
+    if (strpos($current_paths, '*/treasury') !== FALSE) {
+      continue;
+    }
+
+    // Add */treasury to the exclusion list.
+    $paths_array = preg_split('/\r\n|\r|\n/', $current_paths);
+
+    // Insert after */topics.
+    $insert_position = FALSE;
+    foreach ($paths_array as $index => $path) {
+      if (strpos($path, '*/topics') !== FALSE) {
+        $insert_position = $index + 1;
+        break;
+      }
+    }
+
+    if ($insert_position !== FALSE) {
+      array_splice($paths_array, $insert_position, 0, '*/treasury');
+    }
+    else {
+      $paths_array[] = '*/treasury';
+    }
+
+    $new_paths = implode("\r\n", $paths_array);
+    $config->set('visibility.request_path.pages', $new_paths);
+    $config->save();
+
+    \Drupal::logger('group_treasury')->info('Hidden page title block @block_id on treasury pages.', [
+      '@block_id' => $block_id,
+    ]);
+  }
+}
+
+/**
+ * Update block visibility to include treasury tab.
+ */
+function group_treasury_update_9001() {
+  _group_treasury_update_block_visibility();
+  return t('Added treasury path to block visibility configurations.');
+}
+
+/**
+ * Hide page title block on treasury pages.
+ */
+function group_treasury_update_9002() {
+  _group_treasury_update_page_title_block();
+  return t('Hidden page title block on treasury pages for proper layout.');
+}
+
+/**
+ * Grant treasury permissions to Group Manager and Member roles.
+ */
+function group_treasury_update_9003() {
+  $role_storage = \Drupal::entityTypeManager()->getStorage('group_role');
+
+  // Define permissions for Group Manager role.
+  $manager_permissions = [
+    // Group relation permissions (for treasury entity CRUD operations).
+    'create group_safe_account:safe_account entity',
+    'view group_safe_account:safe_account entity',
+    'delete group_safe_account:safe_account entity',
+    // Module-level permissions (for treasury operations).
+    'view group_treasury',
+    'propose group_treasury transactions',
+    'sign group_treasury transactions',
+    'execute group_treasury transactions',
+    'manage group_treasury',
+  ];
+
+  // Define permissions for Member role.
+  $member_permissions = [
+    // Group relation permissions (for viewing treasury).
+    'view group_safe_account:safe_account entity',
+    // Module-level permissions (for treasury operations).
+    'view group_treasury',
+    'propose group_treasury transactions',
+  ];
+
+  // Update Group Manager role.
+  $manager_role = $role_storage->load('flexible_group-group_manager');
+  if ($manager_role) {
+    foreach ($manager_permissions as $permission) {
+      if (!$manager_role->hasPermission($permission)) {
+        $manager_role->grantPermission($permission);
+      }
+    }
+    $manager_role->save();
+    \Drupal::logger('group_treasury')->info('Granted treasury permissions to Group Manager role.');
+  }
+
+  // Update Member role.
+  $member_role = $role_storage->load('flexible_group-member');
+  if ($member_role) {
+    foreach ($member_permissions as $permission) {
+      if (!$member_role->hasPermission($permission)) {
+        $member_role->grantPermission($permission);
+      }
+    }
+    $member_role->save();
+    \Drupal::logger('group_treasury')->info('Granted treasury permissions to Member role.');
+  }
+
+  // Clear caches to ensure permissions are applied.
+  drupal_flush_all_caches();
+
+  return t('Granted treasury permissions to Group Manager and Member roles for flexible_group type.');
+}
+
+/**
+ * Remove unnecessary relationship permission from roles.
+ *
+ * The 'create group_safe_account:safe_account relationship' permission is
+ * no longer used by the access control system (replaced by module-level
+ * permissions). This update removes it from roles that have it.
+ */
+function group_treasury_update_9004() {
+  $role_storage = \Drupal::entityTypeManager()->getStorage('group_role');
+
+  $roles_to_update = [
+    'flexible_group-group_manager',
+    'flexible_group-member',
+  ];
+
+  $permission_to_remove = 'create group_safe_account:safe_account relationship';
+
+  foreach ($roles_to_update as $role_id) {
+    $role = $role_storage->load($role_id);
+    if ($role && $role->hasPermission($permission_to_remove)) {
+      $role->revokePermission($permission_to_remove);
+      $role->save();
+      \Drupal::logger('group_treasury')->info('Removed unused relationship permission from @role', [
+        '@role' => $role_id,
+      ]);
+    }
+  }
+
+  // Clear caches.
+  drupal_flush_all_caches();
+
+  return t('Removed unused relationship permission from Group roles.');
+}

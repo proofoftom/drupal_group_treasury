@@ -1,0 +1,16 @@
+treasury_tab:
+  version: 1.0
+  css:
+    theme:
+      css/treasury-tab.css: {}
+  dependencies:
+    - core/drupal
+
+treasury_deployment:
+  version: 1.x
+  js:
+    js/treasury-deployment.js: {}
+  dependencies:
+    - core/drupal
+    - core/drupal.ajax
+    - safe_smart_accounts/safe_deployment

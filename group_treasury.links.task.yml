@@ -1,0 +1,32 @@
+# Treasury tab
+group_treasury.treasury_tab:
+  route_name: group_treasury.treasury
+  base_route: entity.group.canonical
+  title: "Treasury"
+  weight: 50
+
+# Child routes - defined as tasks so they inherit parent tabs
+# Note: These are removed from rendering via hook_preprocess_menu_local_tasks()
+group_treasury.propose_task:
+  route_name: group_treasury.propose_transaction
+  parent_id: group_treasury.treasury_tab
+  title: "Propose Transaction"
+  weight: 100
+
+group_treasury.create_task:
+  route_name: group_treasury.create
+  parent_id: group_treasury.treasury_tab
+  title: "Create Treasury"
+  weight: 101
+
+group_treasury.reconnect_task:
+  route_name: group_treasury.reconnect
+  parent_id: group_treasury.treasury_tab
+  title: "Reconnect Treasury"
+  weight: 102
+
+group_treasury.transaction_task:
+  route_name: group_treasury.transaction_view
+  parent_id: group_treasury.treasury_tab
+  title: "Transaction Details"
+  weight: 103
