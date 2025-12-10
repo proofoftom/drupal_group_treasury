@@ -306,3 +306,72 @@ function group_treasury_update_9004() {
 
   return t('Removed unused relationship permission from Group roles.');
 }
+
+/**
+ * Grant Group-level treasury permissions to Group Manager and Member roles.
+ *
+ * This update hook adds the treasury permissions defined in
+ * group_treasury.group.permissions.yml to the appropriate Group roles.
+ * These permissions are required for the Treasury tab to be visible.
+ */
+function group_treasury_update_9005() {
+  $role_storage = \Drupal::entityTypeManager()->getStorage('group_role');
+
+  // Define permissions for Group Manager role.
+  $manager_permissions = [
+    'view group_treasury',
+    'propose group_treasury transactions',
+    'sign group_treasury transactions',
+    'execute group_treasury transactions',
+    'manage group_treasury',
+  ];
+
+  // Define permissions for Member role.
+  $member_permissions = [
+    'view group_treasury',
+    'propose group_treasury transactions',
+  ];
+
+  // Update Group Manager role.
+  $manager_role = $role_storage->load('flexible_group-group_manager');
+  if ($manager_role) {
+    $updated = FALSE;
+    foreach ($manager_permissions as $permission) {
+      if (!$manager_role->hasPermission($permission)) {
+        $manager_role->grantPermission($permission);
+        $updated = TRUE;
+      }
+    }
+    if ($updated) {
+      $manager_role->save();
+      \Drupal::logger('group_treasury')->info('Granted treasury permissions to Group Manager role.');
+    }
+  }
+  else {
+    \Drupal::logger('group_treasury')->warning('Could not find flexible_group-group_manager role.');
+  }
+
+  // Update Member role.
+  $member_role = $role_storage->load('flexible_group-member');
+  if ($member_role) {
+    $updated = FALSE;
+    foreach ($member_permissions as $permission) {
+      if (!$member_role->hasPermission($permission)) {
+        $member_role->grantPermission($permission);
+        $updated = TRUE;
+      }
+    }
+    if ($updated) {
+      $member_role->save();
+      \Drupal::logger('group_treasury')->info('Granted treasury permissions to Member role.');
+    }
+  }
+  else {
+    \Drupal::logger('group_treasury')->warning('Could not find flexible_group-member role.');
+  }
+
+  // Clear caches.
+  drupal_flush_all_caches();
+
+  return t('Granted Group-level treasury permissions to Group Manager and Member roles.');
+}
