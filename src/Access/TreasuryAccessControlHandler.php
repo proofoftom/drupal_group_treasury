@@ -74,14 +74,11 @@ class TreasuryAccessControlHandler implements AccessInterface {
    */
   public function accessTransaction(GroupInterface $group, AccountInterface $account, RouteMatchInterface $route_match): AccessResultInterface {
     // User must have sign OR execute permission to view transactions.
-    $membership = $group->getMember($account);
-    if (!$membership) {
-      return AccessResult::forbidden('User is not a group member')
-        ->addCacheContexts(['user', 'route.group']);
-    }
-
-    $can_sign = $membership->hasPermission('sign group_treasury transactions');
-    $can_execute = $membership->hasPermission('execute group_treasury transactions');
+    // Use GroupPermissionChecker to properly handle member, outsider, and
+    // anonymous role permissions.
+    $permission_checker = \Drupal::service('group_permission.checker');
+    $can_sign = $permission_checker->hasPermissionInGroup('sign group_treasury transactions', $account, $group);
+    $can_execute = $permission_checker->hasPermissionInGroup('execute group_treasury transactions', $account, $group);
 
     if (!$can_sign && !$can_execute) {
       return AccessResult::forbidden('User does not have permission to view transactions')
@@ -121,7 +118,7 @@ class TreasuryAccessControlHandler implements AccessInterface {
    */
   protected function checkTreasuryAccess(GroupInterface $group, AccountInterface $account, string $operation): AccessResultInterface {
     // Map operations to module-level Group permissions.
-    // These permissions are defined in group_treasury.permissions.yml and
+    // These permissions are defined in group_treasury.group.permissions.yml and
     // can be configured per Group Type via the Group permissions UI.
     $permission_map = [
       'view' => 'view group_treasury',
@@ -134,14 +131,11 @@ class TreasuryAccessControlHandler implements AccessInterface {
         ->addCacheContexts(['user.permissions']);
     }
 
-    $membership = $group->getMember($account);
-    if (!$membership) {
-      return AccessResult::forbidden('User is not a group member')
-        ->addCacheContexts(['user', 'route.group']);
-    }
-
-    // Check if member has the required permission.
-    $has_permission = $membership->hasPermission($permission_map[$operation]);
+    // Use GroupPermissionChecker to properly handle member, outsider, and
+    // anonymous role permissions. This allows outsiders to view treasuries
+    // when the permission is granted to the Outsider role.
+    $permission_checker = \Drupal::service('group_permission.checker');
+    $has_permission = $permission_checker->hasPermissionInGroup($permission_map[$operation], $account, $group);
 
     return AccessResult::allowedIf($has_permission)
       ->addCacheContexts(['user.group_permissions', 'route.group'])
