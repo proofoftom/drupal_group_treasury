@@ -1,0 +1,140 @@
+<?php
+
+/**
+ * @file
+ * Install, update and uninstall functions for the Group Treasury module.
+ */
+
+/**
+ * Implements hook_install().
+ */
+function group_treasury_install() {
+  _group_treasury_set_default_permissions();
+  \Drupal::messenger()->addMessage(t('Group Treasury module installed successfully.'));
+}
+
+/**
+ * Set default treasury permissions for all Group types.
+ *
+ * Default permissions:
+ * - Member: view treasury, propose transactions
+ * - Admin roles: all treasury permissions
+ * - Outsider: none (must join to view)
+ * - Anonymous: none
+ *
+ * Admin roles are detected using common patterns:
+ * - {bundle}-admin (standard Group module)
+ * - {bundle}-group_manager (Open Social)
+ */
+function _group_treasury_set_default_permissions() {
+  $role_storage = \Drupal::entityTypeManager()->getStorage('group_role');
+  $group_type_storage = \Drupal::entityTypeManager()->getStorage('group_type');
+
+  // Define permissions for admin/manager roles.
+  $admin_permissions = [
+    'view group_treasury',
+    'propose group_treasury transactions',
+    'sign group_treasury transactions',
+    'execute group_treasury transactions',
+    'manage group_treasury',
+    // Group relation permissions.
+    'create group_safe_account:safe_account entity',
+    'view group_safe_account:safe_account entity',
+    'delete group_safe_account:safe_account entity',
+  ];
+
+  // Define permissions for member roles.
+  $member_permissions = [
+    'view group_treasury',
+    'propose group_treasury transactions',
+    'view group_safe_account:safe_account entity',
+  ];
+
+  // Load all Group types.
+  $group_types = $group_type_storage->loadMultiple();
+
+  foreach ($group_types as $group_type) {
+    $group_type_id = $group_type->id();
+
+    // Common role patterns for admin/manager roles.
+    $admin_role_patterns = [
+      $group_type_id . '-admin',
+      $group_type_id . '-group_manager',
+    ];
+
+    // Member role pattern.
+    $member_role_id = $group_type_id . '-member';
+
+    // Grant permissions to admin/manager roles.
+    foreach ($admin_role_patterns as $role_id) {
+      $role = $role_storage->load($role_id);
+      if ($role) {
+        $updated = FALSE;
+        foreach ($admin_permissions as $permission) {
+          if (!$role->hasPermission($permission)) {
+            $role->grantPermission($permission);
+            $updated = TRUE;
+          }
+        }
+        if ($updated) {
+          $role->save();
+          \Drupal::logger('group_treasury')->info('Granted treasury permissions to @role role.', [
+            '@role' => $role->label(),
+          ]);
+        }
+      }
+    }
+
+    // Grant permissions to member role.
+    $member_role = $role_storage->load($member_role_id);
+    if ($member_role) {
+      $updated = FALSE;
+      foreach ($member_permissions as $permission) {
+        if (!$member_role->hasPermission($permission)) {
+          $member_role->grantPermission($permission);
+          $updated = TRUE;
+        }
+      }
+      if ($updated) {
+        $member_role->save();
+        \Drupal::logger('group_treasury')->info('Granted treasury permissions to @role role.', [
+          '@role' => $member_role->label(),
+        ]);
+      }
+    }
+
+    // Explicitly ensure outsider and anonymous have NO treasury permissions.
+    // This is the secure default - groups must opt-in to public treasury visibility.
+    $restricted_roles = [
+      $group_type_id . '-outsider',
+      $group_type_id . '-anonymous',
+    ];
+
+    foreach ($restricted_roles as $role_id) {
+      $role = $role_storage->load($role_id);
+      if ($role) {
+        $revoked = FALSE;
+        foreach ($admin_permissions as $permission) {
+          if ($role->hasPermission($permission)) {
+            $role->revokePermission($permission);
+            $revoked = TRUE;
+          }
+        }
+        if ($revoked) {
+          $role->save();
+          \Drupal::logger('group_treasury')->info('Revoked treasury permissions from @role role for secure defaults.', [
+            '@role' => $role->label(),
+          ]);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Update hook to set default treasury permissions.
+ */
+function group_treasury_update_9001() {
+  _group_treasury_set_default_permissions();
+  return t('Set default treasury permissions for Group roles.');
+}
