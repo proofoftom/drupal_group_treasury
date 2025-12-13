@@ -7,12 +7,15 @@ use Drupal\Core\Form\FormBase;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\group\Entity\GroupInterface;
 use Drupal\group_treasury\Service\GroupTreasuryService;
+use Drupal\safe_smart_accounts\Form\SafeTransactionFormTrait;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
  * Form for proposing a treasury transaction.
  */
 class TreasuryTransactionProposeForm extends FormBase {
+
+  use SafeTransactionFormTrait;
 
   /**
    * The group treasury service.
@@ -92,7 +95,9 @@ class TreasuryTransactionProposeForm extends FormBase {
 
     $form_state->set('treasury', $treasury);
 
-    $form['#tree'] = TRUE;
+    // Wrap entire form in card
+    $form['#prefix'] = '<div class="card"><div class="card__block">';
+    $form['#suffix'] = '</div></div>';
 
     $form['description_text'] = [
       '#type' => 'markup',
@@ -104,42 +109,9 @@ class TreasuryTransactionProposeForm extends FormBase {
       '</div>',
     ];
 
-    $form['to_address'] = [
-      '#type' => 'textfield',
-      '#title' => $this->t('Recipient Address'),
-      '#required' => TRUE,
-      '#description' => $this->t('Ethereum address to send funds to (0x...)'),
-      '#placeholder' => '0x742d35Cc6634C0532925a3b8D8938d9e1Aac5C63',
-      '#size' => 60,
-    ];
-
-    $form['value'] = [
-      '#type' => 'textfield',
-      '#title' => $this->t('Amount (ETH)'),
-      '#required' => TRUE,
-      '#description' => $this->t('Amount of ETH to send (e.g., 0.1)'),
-      '#placeholder' => '0.0',
-      '#default_value' => '0',
-    ];
-
-    $form['data'] = [
-      '#type' => 'textarea',
-      '#title' => $this->t('Data (optional)'),
-      '#description' => $this->t('Hex-encoded data for contract interaction. Leave empty for simple ETH transfers.'),
-      '#placeholder' => '0x',
-      '#rows' => 3,
-    ];
-
-    $form['operation'] = [
-      '#type' => 'radios',
-      '#title' => $this->t('Operation Type'),
-      '#options' => [
-        '0' => $this->t('Call (standard transaction)'),
-        '1' => $this->t('DelegateCall (advanced - use with caution)'),
-      ],
-      '#default_value' => '0',
-      '#description' => $this->t('Call is for standard transactions. DelegateCall executes code in the Safe\'s context.'),
-    ];
+    // Transaction Details - required fields at top level
+    $form['to_address'] = $this->buildTreasuryToAddressField();
+    $form['value'] = $this->buildTreasuryValueField();
 
     $form['description'] = [
       '#type' => 'textarea',
@@ -148,6 +120,17 @@ class TreasuryTransactionProposeForm extends FormBase {
       '#description' => $this->t('Brief description of this transaction for other signers'),
       '#rows' => 3,
     ];
+
+    // Advanced Options (collapsible, closed by default)
+    $form['advanced'] = [
+      '#type' => 'details',
+      '#title' => $this->t('Advanced Options'),
+      '#open' => FALSE,
+      '#attributes' => ['class' => ['social-collapsible-fieldset']],
+    ];
+
+    $form['advanced']['operation'] = $this->buildOperationRadiosField();
+    $form['advanced']['data'] = $this->buildTreasuryDataField();
 
     $form['actions'] = [
       '#type' => 'actions',
@@ -175,25 +158,17 @@ class TreasuryTransactionProposeForm extends FormBase {
   public function validateForm(array &$form, FormStateInterface $form_state): void {
     $values = $form_state->getValues();
 
-    // Validate Ethereum address.
+    // Validate using trait methods
     $to_address = trim($values['to_address']);
-    if (!preg_match('/^0x[a-fA-F0-9]{40}$/', $to_address)) {
-      $form_state->setErrorByName('to_address', $this->t('Invalid Ethereum address format.'));
-    }
+    $this->validateToAddress($form_state, 'to_address', $to_address);
 
-    // Validate value.
     $value = $values['value'];
-    if (!is_numeric($value) || (float) $value < 0) {
-      $form_state->setErrorByName('value', $this->t('Value must be a positive number.'));
-    }
+    $this->validateValue($form_state, 'value', $value);
 
-    // Validate data if provided.
-    $data = trim($values['data'] ?? '');
-    if (!empty($data) && $data !== '0x') {
-      if (!preg_match('/^0x[a-fA-F0-9]*$/', $data)) {
-        $form_state->setErrorByName('data', $this->t('Data must be valid hex format (0x...)'));
-      }
-    }
+    // Advanced options may not be present if fieldset is not expanded
+    $advanced = $values['advanced'] ?? [];
+    $data = trim($advanced['data'] ?? '');
+    $this->validateData($form_state, 'advanced][data', $data);
   }
 
   /**
@@ -209,6 +184,9 @@ class TreasuryTransactionProposeForm extends FormBase {
       return;
     }
 
+    // Extract advanced values with defaults
+    $advanced = $values['advanced'] ?? [];
+
     try {
       // Get the next nonce for this Safe.
       $transaction_storage = $this->entityTypeManager->getStorage('safe_transaction');
@@ -223,31 +201,31 @@ class TreasuryTransactionProposeForm extends FormBase {
       $next_nonce = 0;
       if (!empty($result)) {
         $last_tx = $transaction_storage->load(reset($result));
-        $next_nonce = $last_tx->getNonce() + 1;
+        $next_nonce = (int) $last_tx->get('nonce')->value + 1;
       }
 
-      // Convert ETH value to Wei.
-      $value_in_wei = bcmul($values['value'], '1000000000000000000', 0);
+      // Convert ETH value to Wei using trait method
+      $value_in_wei = $this->ethToWei($values['value']);
 
       // Normalize data.
-      $data = trim($values['data'] ?? '');
+      $data = trim($advanced['data'] ?? '');
       if (empty($data) || $data === '0x') {
         $data = '0x';
       }
 
       // Create SafeTransaction entity.
-      $transaction = $transaction_storage->create([
+      $tx = $transaction_storage->create([
         'safe_account' => $treasury->id(),
         'to_address' => strtolower(trim($values['to_address'])),
         'value' => $value_in_wei,
         'data' => $data,
-        'operation' => (int) $values['operation'],
+        'operation' => (int) ($advanced['operation'] ?? 0),
         'nonce' => $next_nonce,
         'status' => 'pending',
         'created_by' => $this->currentUser()->id(),
         'description' => trim($values['description']),
       ]);
-      $transaction->save();
+      $tx->save();
 
       $this->messenger()->addStatus($this->t('Transaction proposal created successfully. Nonce: @nonce', [
         '@nonce' => $next_nonce,

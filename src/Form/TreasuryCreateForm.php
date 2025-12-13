@@ -2,12 +2,17 @@
 
 namespace Drupal\group_treasury\Form;
 
+use Drupal\Core\Ajax\AjaxResponse;
+use Drupal\Core\Ajax\CssCommand;
+use Drupal\Core\Ajax\ReplaceCommand;
+use Drupal\Core\Ajax\SettingsCommand;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Form\FormBase;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Url;
 use Drupal\group\Entity\GroupInterface;
 use Drupal\group_treasury\Service\GroupTreasuryService;
+use Drupal\safe_smart_accounts\Form\SafeAccountFormTrait;
 use Drupal\safe_smart_accounts\Service\UserSignerResolver;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
@@ -15,6 +20,8 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
  * Form for creating a treasury for an existing group.
  */
 class TreasuryCreateForm extends FormBase {
+
+  use SafeAccountFormTrait;
 
   /**
    * The group treasury service.
@@ -101,6 +108,54 @@ class TreasuryCreateForm extends FormBase {
 
     $form['#tree'] = TRUE;
 
+    // Add AJAX wrapper for inline deployment
+    $form['#prefix'] = '<div id="treasury-create-form-wrapper">';
+    $form['#suffix'] = '</div>';
+
+    // Attach treasury deployment library (includes JS, depends on safe_deployment for CSS and helpers)
+    $form['#attached']['library'][] = 'group_treasury/treasury_deployment';
+
+    // Deployment status container (hidden by default, shown after form submit)
+    $form['deployment_status'] = [
+      '#type' => 'container',
+      '#attributes' => [
+        'id' => 'safe-deployment-status-container',
+        'class' => ['safe-deployment-status'],
+        'style' => 'display: none;',
+      ],
+      '#weight' => -5,
+    ];
+
+    $form['deployment_status']['progress'] = [
+      '#markup' => '
+        <div class="deployment-progress">
+          <h3>' . $this->t('Deploying Group Treasury') . '</h3>
+          <div class="progress-steps">
+            <div class="step" id="step-1" data-status="pending">
+              <span class="step-icon">⏳</span>
+              <span class="step-text">' . $this->t('Saving treasury configuration...') . '</span>
+              <span class="step-details"></span>
+            </div>
+            <div class="step" id="step-2" data-status="pending">
+              <span class="step-icon">🔐</span>
+              <span class="step-text">' . $this->t('Waiting for transaction signature...') . '</span>
+              <span class="step-details"></span>
+            </div>
+            <div class="step" id="step-3" data-status="pending">
+              <span class="step-icon">🚀</span>
+              <span class="step-text">' . $this->t('Waiting for blockchain confirmation...') . '</span>
+              <span class="step-details"></span>
+            </div>
+            <div class="step" id="step-4" data-status="pending">
+              <span class="step-icon">✅</span>
+              <span class="step-text">' . $this->t('Deployment complete!') . '</span>
+              <span class="step-details"></span>
+            </div>
+          </div>
+        </div>
+      ',
+    ];
+
     $form['description'] = [
       '#markup' => '<div class="treasury-create-description">' .
       '<h3>' . $this->t('Deploy Treasury for @group', ['@group' => $group->label()]) . '</h3>' .
@@ -108,114 +163,23 @@ class TreasuryCreateForm extends FormBase {
       '</div>',
     ];
 
-    $form['network'] = [
-      '#type' => 'select',
-      '#title' => $this->t('Network'),
-      '#description' => $this->t('Select the Ethereum network for the treasury Safe.'),
-      '#options' => [
-        'sepolia' => $this->t('Sepolia Testnet'),
-        'hardhat' => $this->t('Hardhat Local'),
-      ],
-      '#default_value' => 'sepolia',
-      '#required' => TRUE,
-    ];
+    // Use treasury-specific network field wrapper
+    $form['network'] = $this->buildTreasuryNetworkField();
 
-    $form['threshold'] = [
-      '#type' => 'number',
-      '#title' => $this->t('Signature Threshold'),
-      '#description' => $this->t('Number of signatures required to execute transactions. Must be between 1 and the number of signers.'),
-      '#default_value' => 1,
-      '#min' => 1,
-      '#max' => 10,
-      '#required' => TRUE,
-    ];
+    // Use trait method for threshold field
+    $form['threshold'] = $this->buildThresholdField();
 
-    // Get group admin members and pre-populate signers.
+    // Get group admin members and pre-populate signers
     $admin_signers = $this->getGroupAdminSigners($group);
 
-    $form['signers'] = [
-      '#type' => 'fieldset',
-      '#title' => $this->t('Signers'),
-      '#description' => $this->t('Group admins with Ethereum addresses are automatically included as signers.'),
-    ];
-
-    if (empty($admin_signers)) {
-      $form['signers']['warning'] = [
-        '#markup' => '<div class="messages messages--warning">' .
-        $this->t('No group admins have Ethereum addresses configured. You must add signers manually.') .
-        '</div>',
-      ];
-    }
-    else {
-      $form['signers']['admin_signers'] = [
-        '#type' => 'item',
-        '#title' => $this->t('Group Admin Signers'),
-        '#markup' => '<ul><li>' . implode('</li><li>', $admin_signers) . '</li></ul>',
-      ];
-    }
-
-    // Get the number of additional signer fields from form state.
-    $num_signers = $form_state->get('num_signers');
-    if ($num_signers === NULL) {
-      $num_signers = empty($admin_signers) ? 1 : 0;
-      $form_state->set('num_signers', $num_signers);
-    }
-
-    if ($num_signers > 0) {
-      $form['signers']['additional_signers'] = [
-        '#type' => 'container',
-        '#title' => $this->t('Additional Signers'),
-        '#prefix' => '<div id="signers-fieldset-wrapper">',
-        '#suffix' => '</div>',
-        '#tree' => TRUE,
-      ];
-
-      for ($i = 0; $i < $num_signers; $i++) {
-        $form['signers']['additional_signers'][$i] = [
-          '#type' => 'container',
-          '#attributes' => ['class' => ['signer-field-row']],
-        ];
-
-        $form['signers']['additional_signers'][$i]['address'] = [
-          '#type' => 'textfield',
-          '#title' => $this->t('Signer @num', ['@num' => $i + 1]),
-          '#description' => $i === 0 ? $this->t('Enter a username or Ethereum address. Start typing a username to see suggestions.') : '',
-          '#placeholder' => 'alice or 0x742d35Cc6634C0532925a3b8D8938d9e1Aac5C63',
-          '#autocomplete_route_name' => 'safe_smart_accounts.signer_autocomplete',
-          '#size' => 60,
-        ];
-
-        $form['signers']['additional_signers'][$i]['remove'] = [
-          '#type' => 'submit',
-          '#value' => $this->t('Remove'),
-          '#submit' => ['::removeSignerField'],
-          '#ajax' => [
-            'callback' => '::updateSignerFieldsCallback',
-            'wrapper' => 'signers-fieldset-wrapper',
-          ],
-          '#name' => 'remove_signer_' . $i,
-          '#signer_delta' => $i,
-          '#attributes' => ['class' => ['button--small', 'button--danger']],
-        ];
-      }
-    }
-    else {
-      $form['signers']['additional_signers'] = [
-        '#prefix' => '<div id="signers-fieldset-wrapper">',
-        '#suffix' => '</div>',
-      ];
-    }
-
-    $form['signers']['add_signer'] = [
-      '#type' => 'submit',
-      '#value' => $this->t('Add another signer'),
-      '#submit' => ['::addSignerField'],
-      '#ajax' => [
-        'callback' => '::updateSignerFieldsCallback',
-        'wrapper' => 'signers-fieldset-wrapper',
-      ],
-      '#attributes' => ['class' => ['button--small']],
-    ];
+    // Use trait method for signers fieldset with treasury customizations
+    $form['signers'] = $this->buildSignersFieldset($form, $form_state, [
+      'description' => $this->t('Group admins with Ethereum addresses are automatically included as signers.'),
+      'show_primary_signer' => FALSE,  // Don't show primary signer for treasuries
+      'admin_signers' => $admin_signers,
+      'admin_signers_title' => $this->t('Group Admin Signers'),
+      'show_admin_warning' => TRUE,  // Show warning if no admin signers
+    ]);
 
     $form['advanced'] = [
       '#type' => 'details',
@@ -223,12 +187,8 @@ class TreasuryCreateForm extends FormBase {
       '#open' => FALSE,
     ];
 
-    $form['advanced']['salt_nonce'] = [
-      '#type' => 'textfield',
-      '#title' => $this->t('Salt Nonce'),
-      '#description' => $this->t('Optional salt nonce for deterministic Safe address generation. Leave empty for random generation.'),
-      '#placeholder' => '0',
-    ];
+    // Use trait method for salt nonce field
+    $form['advanced']['salt_nonce'] = $this->buildSaltNonceField();
 
     $form['actions'] = [
       '#type' => 'actions',
@@ -238,6 +198,13 @@ class TreasuryCreateForm extends FormBase {
       '#type' => 'submit',
       '#value' => $this->t('Deploy Treasury'),
       '#button_type' => 'primary',
+      '#ajax' => [
+        'callback' => '::submitFormAjax',
+        'wrapper' => 'treasury-create-form-wrapper',
+        'progress' => [
+          'type' => 'none', // We'll show custom progress
+        ],
+      ],
     ];
 
     $form['actions']['cancel'] = [
@@ -250,53 +217,7 @@ class TreasuryCreateForm extends FormBase {
     return $form;
   }
 
-  /**
-   * AJAX callback to add a signer field.
-   */
-  public function addSignerField(array &$form, FormStateInterface $form_state): void {
-    $num_signers = $form_state->get('num_signers');
-    $num_signers++;
-    $form_state->set('num_signers', $num_signers);
-    $form_state->setRebuild();
-  }
-
-  /**
-   * AJAX callback to remove a signer field.
-   */
-  public function removeSignerField(array &$form, FormStateInterface $form_state): void {
-    $trigger = $form_state->getTriggeringElement();
-    $delta = $trigger['#signer_delta'];
-
-    // Get current values.
-    $values = $form_state->getUserInput();
-    $signers = $values['signers']['additional_signers'] ?? [];
-
-    // Remove the signer at this delta.
-    unset($signers[$delta]);
-
-    // Re-index the array.
-    $signers = array_values($signers);
-
-    // Update form state.
-    $values['signers']['additional_signers'] = $signers;
-    $form_state->setUserInput($values);
-
-    // Decrease the count.
-    $num_signers = $form_state->get('num_signers');
-    if ($num_signers > 1) {
-      $num_signers--;
-      $form_state->set('num_signers', $num_signers);
-    }
-
-    $form_state->setRebuild();
-  }
-
-  /**
-   * AJAX callback to return updated signer fields.
-   */
-  public function updateSignerFieldsCallback(array &$form, FormStateInterface $form_state): array {
-    return $form['signers']['additional_signers'];
-  }
+  // AJAX callbacks for signer management now provided by SafeAccountFormTrait
 
   /**
    * {@inheritdoc}
@@ -312,7 +233,10 @@ class TreasuryCreateForm extends FormBase {
 
     $group = $form_state->get('group');
     $admin_signers = $this->getGroupAdminSigners($group);
-    $additional_signers = $this->parseSignerAddresses($values['signers']['additional_signers'] ?? []);
+    $additional_signers = $this->parseSignerAddresses(
+      $values['signers']['additional_signers'] ?? [],
+      $this->signerResolver
+    );
     $all_signers = array_merge($admin_signers, $additional_signers);
 
     if (empty($all_signers)) {
@@ -320,28 +244,14 @@ class TreasuryCreateForm extends FormBase {
       return;
     }
 
-    // Validate threshold.
+    // Validate threshold using trait method
     $threshold = (int) $values['threshold'];
     $total_signers = count($all_signers);
+    $this->validateThreshold($form_state, 'threshold', $threshold, $total_signers);
 
-    if ($threshold > $total_signers) {
-      $form_state->setErrorByName('threshold', $this->t('Threshold (@threshold) cannot be greater than the number of signers (@signers).', [
-        '@threshold' => $threshold,
-        '@signers' => $total_signers,
-      ]));
-    }
-
-    if ($threshold < 1) {
-      $form_state->setErrorByName('threshold', $this->t('Threshold must be at least 1.'));
-    }
-
-    // Validate additional signer addresses.
+    // Validate additional signer addresses using trait method
     foreach ($additional_signers as $address) {
-      if (!$this->isValidEthereumAddress($address)) {
-        $form_state->setErrorByName('signers][additional_signers', $this->t('Invalid Ethereum address: @address', [
-          '@address' => $address,
-        ]));
-      }
+      $this->validateEthereumAddress($form_state, 'signers][additional_signers', $address);
     }
 
     // Check for duplicate addresses.
@@ -350,11 +260,9 @@ class TreasuryCreateForm extends FormBase {
       $form_state->setErrorByName('signers][additional_signers', $this->t('Duplicate signer addresses are not allowed.'));
     }
 
-    // Validate salt nonce if provided.
+    // Validate salt nonce using trait method
     $salt_nonce = $values['advanced']['salt_nonce'] ?? '';
-    if (!empty($salt_nonce) && (!is_numeric($salt_nonce) || (int) $salt_nonce < 0)) {
-      $form_state->setErrorByName('advanced][salt_nonce', $this->t('Salt nonce must be a non-negative integer.'));
-    }
+    $this->validateSaltNonce($form_state, 'advanced][salt_nonce', $salt_nonce);
   }
 
   /**
@@ -370,9 +278,12 @@ class TreasuryCreateForm extends FormBase {
     }
 
     try {
-      // Gather all signers.
+      // Gather all signers using trait method (pass UserSignerResolver)
       $admin_signers = $this->getGroupAdminSigners($group);
-      $additional_signers = $this->parseSignerAddresses($values['signers']['additional_signers'] ?? []);
+      $additional_signers = $this->parseSignerAddresses(
+        $values['signers']['additional_signers'] ?? [],
+        $this->signerResolver
+      );
       $all_signers = array_merge($admin_signers, $additional_signers);
 
       // Create SafeAccount entity owned by the group creator.
@@ -384,6 +295,8 @@ class TreasuryCreateForm extends FormBase {
         'status' => 'pending',
       ]);
       $safe_account->save();
+      // Store the created Safe account ID for AJAX handler
+      $form_state->set('created_safe_account_id', $safe_account->id());
 
       // Get salt_nonce value, generate unique value if not provided.
       // Use timestamp to ensure each Safe gets a unique nonce for CREATE2.
@@ -405,12 +318,16 @@ class TreasuryCreateForm extends FormBase {
       // Link Safe to Group as treasury.
       $this->treasuryService->addTreasury($group, $safe_account);
 
-      $this->messenger()->addStatus($this->t('Treasury created successfully! The Safe is currently pending deployment.'));
+      $this->messenger()->addStatus($this->t('Treasury created successfully!'));
 
-      // Redirect to the treasury tab.
-      $form_state->setRedirect('group_treasury.treasury', [
-        'group' => $group->id(),
-      ]);
+      // Skip redirect for AJAX submissions - JavaScript will handle deployment and redirect
+      $triggering_element = $form_state->getTriggeringElement();
+      if (!isset($triggering_element['#ajax'])) {
+        // Redirect to the treasury tab (only for non-AJAX submissions)
+        $form_state->setRedirect('group_treasury.treasury', [
+          'group' => $group->id(),
+        ]);
+      }
 
     }
     catch (\Exception $e) {
@@ -434,14 +351,23 @@ class TreasuryCreateForm extends FormBase {
     $signers = [];
     $memberships = $group->getMembers();
 
+    // Define possible admin role patterns
+    // Standard Group module uses: {bundle}-admin
+    // Open Social uses: {bundle}-group_manager
+    $bundle = $group->bundle();
+    $admin_role_patterns = [
+      $bundle . '-admin',
+      $bundle . '-group_manager',
+    ];
+
     foreach ($memberships as $membership) {
       $member = $membership->getUser();
 
-      // Check if member has admin role.
+      // Check if member has any admin role pattern.
       $roles = $membership->getRoles();
       $is_admin = FALSE;
       foreach ($roles as $role) {
-        if ($role->id() === $group->bundle() . '-admin') {
+        if (in_array($role->id(), $admin_role_patterns, TRUE)) {
           $is_admin = TRUE;
           break;
         }
@@ -461,49 +387,72 @@ class TreasuryCreateForm extends FormBase {
     return array_unique($signers);
   }
 
+  // parseSignerAddresses() and validation methods now provided by SafeAccountFormTrait
+
   /**
-   * Parses signer addresses from field values.
+   * AJAX callback for form submission.
    *
-   * @param array $signer_fields
-   *   Array of signer field values from the form.
+   * Handles inline deployment by creating entities and triggering JavaScript deployment.
    *
-   * @return array
-   *   Array of parsed Ethereum addresses.
+   * @param array $form
+   *   The form array.
+   * @param \Drupal\Core\Form\FormStateInterface $form_state
+   *   The form state.
+   *
+   * @return \Drupal\Core\Ajax\AjaxResponse
+   *   The AJAX response.
    */
-  protected function parseSignerAddresses(array $signer_fields): array {
-    $addresses = [];
+  public function submitFormAjax(array &$form, FormStateInterface $form_state): AjaxResponse {
+    $response = new AjaxResponse();
 
-    foreach ($signer_fields as $field) {
-      $input = trim($field['address'] ?? '');
-      if (empty($input)) {
-        continue;
-      }
-
-      // Try to resolve as username or address.
-      $resolved = $this->signerResolver->resolveToAddress($input);
-      if ($resolved) {
-        $addresses[] = $resolved;
-      }
-      else {
-        // Keep original if not resolvable (will fail validation).
-        $addresses[] = $input;
-      }
+    // If validation errors, return form with errors
+    if ($form_state->hasAnyErrors()) {
+      return $response->addCommand(new ReplaceCommand('#treasury-create-form-wrapper', $form));
     }
 
-    return array_unique($addresses);
-  }
+    // NOTE: Don't call $this->submitForm() here!
+    // Drupal automatically calls submitForm() before calling this AJAX callback.
+    // Calling it again would create duplicate entities and cause "Group already has treasury" error.
 
-  /**
-   * Validates Ethereum address format.
-   *
-   * @param string $address
-   *   The address to validate.
-   *
-   * @return bool
-   *   TRUE if valid, FALSE otherwise.
-   */
-  protected function isValidEthereumAddress(string $address): bool {
-    return preg_match('/^0x[a-fA-F0-9]{40}$/', $address) === 1;
+    // Get the created Safe account ID and Group from form_state storage
+    // (These were set by submitForm() which Drupal already called)
+    $safe_account_id = $form_state->get('created_safe_account_id');
+    $group = $form_state->get('group');
+
+    if (!$safe_account_id || !$group) {
+      // Error occurred, return form with error message
+      $this->messenger()->addError($this->t('Failed to create treasury.'));
+      return $response->addCommand(new ReplaceCommand('#treasury-create-form-wrapper', $form));
+    }
+
+    // Use proper Drupal AJAX commands (no arbitrary JS execution)
+    // Hide form elements via CSS
+    $response->addCommand(new CssCommand('.treasury-create-description', ['display' => 'none']));
+    $response->addCommand(new CssCommand('#treasury-create-form-wrapper fieldset', ['display' => 'none']));
+    $response->addCommand(new CssCommand('.form-actions', ['display' => 'none']));
+
+    // Hide specific form fields (Network, Threshold, Signers, Advanced Options)
+    $response->addCommand(new CssCommand('[name="network"]', ['display' => 'none']));
+    $response->addCommand(new CssCommand('.js-form-item-network', ['display' => 'none']));
+    $response->addCommand(new CssCommand('[name="threshold"]', ['display' => 'none']));
+    $response->addCommand(new CssCommand('.js-form-item-threshold', ['display' => 'none']));
+    $response->addCommand(new CssCommand('#edit-signers', ['display' => 'none']));
+    $response->addCommand(new CssCommand('#edit-advanced', ['display' => 'none']));
+
+    // Show deployment status container
+    $response->addCommand(new CssCommand('#safe-deployment-status-container', ['display' => 'block']));
+
+    // Pass deployment trigger and data to JavaScript via drupalSettings
+    // A Drupal behavior will handle step updates and trigger deployment
+    $response->addCommand(new SettingsCommand([
+      'groupTreasury' => [
+        'triggerDeployment' => TRUE,
+        'safeAccountId' => $safe_account_id,
+        'groupId' => $group->id(),
+      ],
+    ], FALSE));
+
+    return $response;
   }
 
 }
