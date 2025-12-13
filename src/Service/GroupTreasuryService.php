@@ -120,7 +120,9 @@ class GroupTreasuryService {
    *   Array of group entities.
    */
   public function getGroupsForTreasury(SafeAccountInterface $safe_account): array {
-    $relationship_storage = $this->entityTypeManager->getStorage('group_relationship');
+    // Note: Entity type is 'group_content' even in Group 2.x
+    // (database tables use 'group_relationship' naming).
+    $relationship_storage = $this->entityTypeManager->getStorage('group_content');
     $relationships = $relationship_storage->loadByProperties([
       'entity_id' => $safe_account->id(),
       'plugin_id' => 'group_safe_account:safe_account',

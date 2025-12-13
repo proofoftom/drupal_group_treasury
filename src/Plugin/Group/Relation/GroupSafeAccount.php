@@ -3,23 +3,22 @@
 namespace Drupal\group_treasury\Plugin\Group\Relation;
 
 use Drupal\Core\Form\FormStateInterface;
-use Drupal\Core\StringTranslation\TranslatableMarkup;
-use Drupal\group\Plugin\Attribute\GroupRelationType;
 use Drupal\group\Plugin\Group\Relation\GroupRelationBase;
 
 /**
  * Provides a group relation for Safe Smart Accounts (treasury).
+ *
+ * @GroupRelationType(
+ *   id = "group_safe_account",
+ *   entity_type_id = "safe_account",
+ *   label = @Translation("Group Safe Account (Treasury)"),
+ *   description = @Translation("Links a Safe Smart Account as the group treasury"),
+ *   reference_label = @Translation("Safe Address"),
+ *   reference_description = @Translation("The Safe Smart Account to use as treasury"),
+ *   entity_access = TRUE,
+ *   deriver = "Drupal\group_treasury\Plugin\Group\Relation\GroupSafeAccountDeriver"
+ * )
  */
-#[GroupRelationType(
-  id: 'group_safe_account',
-  entity_type_id: 'safe_account',
-  label: new TranslatableMarkup('Group Safe Account (Treasury)'),
-  description: new TranslatableMarkup('Links a Safe Smart Account as the group treasury'),
-  reference_label: new TranslatableMarkup('Safe Address'),
-  reference_description: new TranslatableMarkup('The Safe Smart Account to use as treasury'),
-  entity_access: TRUE,
-  deriver: 'Drupal\group_treasury\Plugin\Group\Relation\GroupSafeAccountDeriver'
-)]
 class GroupSafeAccount extends GroupRelationBase {
 
   /**

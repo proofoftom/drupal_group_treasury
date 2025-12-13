@@ -5,8 +5,7 @@ group_treasury.treasury:
     _controller: '\Drupal\group_treasury\Controller\GroupTreasuryController::treasuryTab'
     _title_callback: '\Drupal\group_treasury\Controller\GroupTreasuryController::treasuryTitle'
   requirements:
-    _permission: 'view group_treasury'
-    group: \d+
+    _custom_access: '\Drupal\group_treasury\Access\TreasuryAccessControlHandler::accessView'
   options:
     parameters:
       group:
@@ -19,7 +18,7 @@ group_treasury.create:
     _form: '\Drupal\group_treasury\Form\TreasuryCreateForm'
     _title: 'Create Treasury'
   requirements:
-    _permission: 'manage group_treasury'
+    _custom_access: '\Drupal\group_treasury\Access\TreasuryAccessControlHandler::accessManage'
     group: \d+
   options:
     parameters:
@@ -33,7 +32,7 @@ group_treasury.reconnect:
     _form: '\Drupal\group_treasury\Form\TreasuryReconnectForm'
     _title: 'Reconnect Treasury'
   requirements:
-    _permission: 'manage group_treasury'
+    _custom_access: '\Drupal\group_treasury\Access\TreasuryAccessControlHandler::accessManage'
     group: \d+
   options:
     parameters:
@@ -47,9 +46,25 @@ group_treasury.propose_transaction:
     _form: '\Drupal\group_treasury\Form\TreasuryTransactionProposeForm'
     _title: 'Propose Transaction'
   requirements:
-    _permission: 'propose group_treasury transactions'
+    _custom_access: '\Drupal\group_treasury\Access\TreasuryAccessControlHandler::accessPropose'
     group: \d+
   options:
     parameters:
       group:
         type: entity:group
+
+# View transaction route
+group_treasury.transaction_view:
+  path: '/group/{group}/treasury/transaction/{safe_transaction}'
+  defaults:
+    _controller: '\Drupal\group_treasury\Controller\GroupTreasuryController::viewTransaction'
+    _title: 'Transaction Details'
+  requirements:
+    _custom_access: '\Drupal\group_treasury\Access\TreasuryAccessControlHandler::accessTransaction'
+    group: \d+
+  options:
+    parameters:
+      group:
+        type: entity:group
+      safe_transaction:
+        type: entity:safe_transaction
